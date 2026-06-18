@@ -1,3 +1,5 @@
+from datetime import datetime
+print("Текущее время на сервере:", datetime.now())
 import discord
 from discord import ui
 from discord.ext import commands
