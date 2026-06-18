@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 
 # ===================== КОНФИГУРАЦИЯ =====================
 TOKEN = os.getenv('DISCORD_TOKEN')
-SHEET_ID = '1s-3Quq9yq_ZEvRoF4lJG8ezgnOSkGpP5f3K5RygNLq0'  # Ваш ID
+SHEET_ID = '1s-3Quq9yq_ZEvRoF4lJG8ezgnOSkGpP5f3K5RygNLq0'  # ЗАМЕНИТЕ НА ВАШ ID
 
 # ===================== ДИАГНОСТИКА =====================
 print("=== ДИАГНОСТИКА ПОДКЛЮЧЕНИЯ К GOOGLE SHEETS ===")
@@ -32,6 +32,7 @@ if creds_json:
             print("   - private_key: присутствует и начинается корректно ✅")
         else:
             print("   - private_key: отсутствует или имеет неверный формат ❌")
+            sys.exit(1)
     except json.JSONDecodeError as e:
         print(f"4. Ошибка парсинга JSON: {e} ❌")
         sys.exit(1)
@@ -41,8 +42,6 @@ else:
 
 # ===================== ПОДКЛЮЧЕНИЕ К GOOGLE SHEETS =====================
 try:
-    creds_dict = json.loads(creds_json)
-    # Используем явный метод с указанием scopes
     scopes = [
         'https://www.googleapis.com/auth/spreadsheets',
         'https://www.googleapis.com/auth/drive'
@@ -66,7 +65,7 @@ except Exception as e:
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ===================== МОДАЛЬНЫЕ ОКНА (без изменений) =====================
+# ===================== МОДАЛЬНЫЕ ОКНА =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
     nick = ui.TextInput(label='Ник нарушителя', placeholder='Введите ник', required=True)
     violation = ui.TextInput(label='Вид нарушения', placeholder='Например: Гриферство', required=True)
@@ -83,15 +82,21 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
         except ValueError:
             await interaction.response.send_message('❌ Мера наказания должна быть числом!', ephemeral=True)
             return
+
         now = datetime.now()
         who = interaction.user.name
         row = [
-            who, self.nick.value, self.rank.value or '',
-            now.strftime('%Y-%m-%d %H:%M:%S'), self.violation.value,
+            who,
+            self.nick.value,
+            self.rank.value or '',
+            now.strftime('%Y-%m-%d %H:%M:%S'),
+            self.violation.value,
             seconds_int,
             (now + timedelta(seconds=seconds_int)).strftime('%Y-%m-%d %H:%M:%S'),
-            self.recidivism.value or '', self.previous.value or '',
-            self.notes.value or '', self.additional.value or ''
+            self.recidivism.value or '',
+            self.previous.value or '',
+            self.notes.value or '',
+            self.additional.value or ''
         ]
         try:
             sheet.append_row(row)
@@ -101,6 +106,7 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
 
 class FindModal(ui.Modal, title='🔍 Поиск нарушений по нику'):
     nick = ui.TextInput(label='Ник нарушителя', placeholder='Введите ник', required=True)
+
     async def on_submit(self, interaction: discord.Interaction):
         try:
             records = sheet.get_all_records()
@@ -135,16 +141,18 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
         try:
             row_idx = int(self.row_num.value)
             if row_idx < 2:
-                await interaction.response.send_message('❌ Номер строки должен быть ≥ 2', ephemeral=True)
+                await interaction.response.send_message('❌ Номер строки должен быть ≥ 2 (первая строка – заголовки).', ephemeral=True)
                 return
         except ValueError:
             await interaction.response.send_message('❌ Номер строки должен быть числом.', ephemeral=True)
             return
+
         try:
             existing = sheet.row_values(row_idx)
             if not existing:
                 await interaction.response.send_message('❌ Строка не найдена.', ephemeral=True)
                 return
+
             new_row = existing[:]
             if self.nick.value:
                 new_row[1] = self.nick.value
@@ -173,21 +181,36 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
                 new_row[9] = self.notes.value
             if self.additional.value:
                 new_row[10] = self.additional.value
+
             sheet.update(f'A{row_idx}:K{row_idx}', [new_row])
-            await interaction.response.send_message(f'✅ Строка {row_idx} обновлена!', ephemeral=True)
+            await interaction.response.send_message(f'✅ Строка {row_idx} успешно обновлена!', ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
 
-# ===================== КНОПКИ =====================
+# ===================== КНОПКИ МЕНЮ =====================
 class MenuView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+
     @ui.button(label='➕ Добавить', style=discord.ButtonStyle.green)
     async def add_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(AddModal())
+        try:
+            print("[DEBUG] Нажата кнопка Добавить")
+            modal = AddModal()
+            print("[DEBUG] Модальное окно AddModal создано")
+            await interaction.response.send_modal(modal)
+            print("[DEBUG] Модальное окно отправлено")
+        except Exception as e:
+            print(f"[ERROR] Ошибка в add_button: {e}")
+            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
+
     @ui.button(label='🔍 Найти', style=discord.ButtonStyle.blurple)
     async def find_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(FindModal())
+        try:
+            await interaction.response.send_modal(FindModal())
+        except Exception as e:
+            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
+
     @ui.button(label='📋 Последнее', style=discord.ButtonStyle.grey)
     async def last_button(self, interaction: discord.Interaction, button: ui.Button):
         try:
@@ -203,11 +226,20 @@ class MenuView(ui.View):
             await interaction.response.send_message(msg, ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
+
     @ui.button(label='✏️ Изменить', style=discord.ButtonStyle.red)
     async def edit_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.send_modal(EditModal())
+        try:
+            print("[DEBUG] Нажата кнопка Изменить")
+            modal = EditModal()
+            print("[DEBUG] Модальное окно EditModal создано")
+            await interaction.response.send_modal(modal)
+            print("[DEBUG] Модальное окно отправлено")
+        except Exception as e:
+            print(f"[ERROR] Ошибка в edit_button: {e}")
+            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
 
-# ===================== КОМАНДА =====================
+# ===================== КОМАНДА ДЛЯ ОТПРАВКИ МЕНЮ =====================
 @bot.command(name='меню')
 async def menu_command(ctx):
     embed = discord.Embed(
