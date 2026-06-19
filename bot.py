@@ -220,7 +220,7 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
-# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ =====================
+# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ (исправлено) =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
     def __init__(self, who_issued: str, rank: str):
         super().__init__()
@@ -237,17 +237,20 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
 
+        # Отложенный ответ, чтобы избежать тайм-аута
+        await interaction.response.defer(ephemeral=True)
+
         try:
             date_obj = datetime.strptime(self.date.value, '%d.%m.%Y')
             date_str = date_obj.strftime('%Y-%m-%d')
         except ValueError:
-            await interaction.response.send_message('❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ', ephemeral=True)
+            await interaction.followup.send('❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ', ephemeral=True)
             return
 
         try:
             seconds_int = int(self.seconds.value)
         except ValueError:
-            await interaction.response.send_message('❌ Мера наказания должна быть числом!', ephemeral=True)
+            await interaction.followup.send('❌ Мера наказания должна быть числом!', ephemeral=True)
             return
 
         header_row = sheet.get_all_values()[0]
@@ -274,9 +277,9 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             sheet.append_row(row, value_input_option='USER_ENTERED')
             last_row = len(sheet.get_all_values())
             format_row(sheet, last_row)
-            await interaction.response.send_message(f'✅ Нарушение для **{self.nick.value}** добавлено!', ephemeral=True)
+            await interaction.followup.send(f'✅ Нарушение для **{self.nick.value}** добавлено!', ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
+            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
 # ===================== ВИДЫ ДЛЯ ПОШАГОВОГО ДИАЛОГА =====================
 class WhoIssuedView(ui.View):
@@ -426,24 +429,27 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
         if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
+
+        # Отложенный ответ, чтобы избежать тайм-аута
+        await interaction.response.defer(ephemeral=True)
+
         try:
             row_idx = int(self.row_num.value)
             if row_idx < 2:
-                await interaction.response.send_message('❌ Номер строки должен быть ≥ 2.', ephemeral=True)
+                await interaction.followup.send('❌ Номер строки должен быть ≥ 2.', ephemeral=True)
                 return
         except ValueError:
-            await interaction.response.send_message('❌ Номер строки должен быть числом.', ephemeral=True)
+            await interaction.followup.send('❌ Номер строки должен быть числом.', ephemeral=True)
             return
 
         try:
             all_values = sheet.get_all_values()
             if row_idx > len(all_values):
-                await interaction.response.send_message('❌ Строка не найдена.', ephemeral=True)
+                await interaction.followup.send('❌ Строка не найдена.', ephemeral=True)
                 return
             existing_row = all_values[row_idx - 1]
             header_row = all_values[0]
 
-            # Получаем индексы по частичным совпадениям
             def find_idx(pattern):
                 for i, h in enumerate(header_row):
                     if pattern.lower() in h.lower().strip():
@@ -481,7 +487,7 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
                             except ValueError:
                                 pass
                 except ValueError:
-                    await interaction.response.send_message('❌ Мера наказания должна быть числом.', ephemeral=True)
+                    await interaction.followup.send('❌ Мера наказания должна быть числом.', ephemeral=True)
                     return
             if self.additional.value:
                 if col_indices['примечания'] is not None:
@@ -492,9 +498,9 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
             cell_range = f'A{row_idx}:{chr(65 + len(header_row) - 1)}{row_idx}'
             sheet.update(cell_range, [new_row], value_input_option='USER_ENTERED')
             format_row(sheet, row_idx)
-            await interaction.response.send_message(f'✅ Строка {row_idx} обновлена!', ephemeral=True)
+            await interaction.followup.send(f'✅ Строка {row_idx} обновлена!', ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
+            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
 # ===================== КОМАНДА МЕНЮ =====================
 @bot.command(name='меню')
