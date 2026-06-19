@@ -8,77 +8,122 @@ import json
 import sys
 from datetime import datetime, timedelta
 
-# ===================== КОНФИГУРАЦИЯ =====================
-TOKEN = os.getenv('DISCORD_TOKEN')
-SHEET_ID = '1s-3Quq9yq_ZEvRoF4lJG8ezgnOSkGpP5f3K5RygNLq0'  # ЗАМЕНИТЕ НА ВАШ ID
+# ===================== ПРОВЕРКА ОБЯЗАТЕЛЬНЫХ ПЕРЕМЕННЫХ =====================
+required_vars = {
+    'DISCORD_TOKEN': 'Токен бота',
+    'GOOGLE_CREDENTIALS': 'JSON-ключ сервисного аккаунта Google',
+    'SHEET_ID': 'ID Google таблицы',
+    'DISCORD_CHANNEL_ID': 'ID канала для меню',
+    'ALLOWED_USERS': 'Список ID пользователей через запятую'
+}
 
-# ===================== ДИАГНОСТИКА =====================
-print("=== ДИАГНОСТИКА ПОДКЛЮЧЕНИЯ К GOOGLE SHEETS ===")
-print(f"Текущее время на сервере: {datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
-print(f"1. Переменная DISCORD_TOKEN {'✅' if TOKEN else '❌'}")
-print(f"2. SHEET_ID: {SHEET_ID}")
+missing = []
+for var, desc in required_vars.items():
+    if not os.getenv(var):
+        missing.append(f"{var} ({desc})")
 
-creds_json = os.getenv('GOOGLE_CREDENTIALS')
-if creds_json:
-    print("3. Переменная GOOGLE_CREDENTIALS найдена ✅")
-    try:
-        creds_dict = json.loads(creds_json)
-        print("4. JSON успешно распарсен ✅")
-        client_email = creds_dict.get('client_email', 'не найден')
-        project_id = creds_dict.get('project_id', 'не найден')
-        print(f"   - client_email: {client_email}")
-        print(f"   - project_id: {project_id}")
-        if 'private_key' in creds_dict and creds_dict['private_key'].startswith('-----BEGIN'):
-            print("   - private_key: присутствует и начинается корректно ✅")
-        else:
-            print("   - private_key: отсутствует или имеет неверный формат ❌")
-            sys.exit(1)
-    except json.JSONDecodeError as e:
-        print(f"4. Ошибка парсинга JSON: {e} ❌")
-        sys.exit(1)
-else:
-    print("3. Переменная GOOGLE_CREDENTIALS не найдена ❌")
+if missing:
+    print("❌ Ошибка: отсутствуют обязательные переменные окружения:")
+    for m in missing:
+        print(f"   - {m}")
     sys.exit(1)
 
-# ===================== ПОДКЛЮЧЕНИЕ К GOOGLE SHEETS =====================
+TOKEN = os.getenv('DISCORD_TOKEN')
+SHEET_ID = os.getenv('SHEET_ID')
+CHANNEL_ID = os.getenv('DISCORD_CHANNEL_ID')
+ALLOWED_USERS_STR = os.getenv('ALLOWED_USERS')
+
 try:
-    scopes = [
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/drive'
-    ]
+    ALLOWED_USERS = [int(x.strip()) for x in ALLOWED_USERS_STR.split(',') if x.strip()]
+except ValueError:
+    print("❌ Ошибка: ALLOWED_USERS содержит нечисловые значения.")
+    sys.exit(1)
+
+if not ALLOWED_USERS:
+    print("❌ Ошибка: ALLOWED_USERS не должна быть пустой.")
+    sys.exit(1)
+
+try:
+    CHANNEL_ID_INT = int(CHANNEL_ID)
+except ValueError:
+    print("❌ Ошибка: DISCORD_CHANNEL_ID должно быть числом.")
+    sys.exit(1)
+
+print("=== КОНФИГУРАЦИЯ ===")
+print(f"SHEET_ID: {SHEET_ID}")
+print(f"CHANNEL_ID: {CHANNEL_ID_INT}")
+print(f"ALLOWED_USERS: {ALLOWED_USERS}")
+print("=====================")
+
+# ===================== ФУНКЦИИ ПРОВЕРКИ =====================
+def is_allowed(user_id: int) -> bool:
+    return user_id in ALLOWED_USERS
+
+def is_guild_only(interaction_or_ctx) -> bool:
+    if isinstance(interaction_or_ctx, discord.Interaction):
+        return interaction_or_ctx.guild is not None
+    elif isinstance(interaction_or_ctx, commands.Context):
+        return interaction_or_ctx.guild is not None
+    return False
+
+# ===================== ПОДКЛЮЧЕНИЕ К GOOGLE SHEETS =====================
+print("=== ДИАГНОСТИКА GOOGLE SHEETS ===")
+print(f"Текущее время: {datetime.now().strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+creds_json = os.getenv('GOOGLE_CREDENTIALS')
+try:
+    creds_dict = json.loads(creds_json)
+    print("✅ JSON распарсен")
+    print(f"   client_email: {creds_dict.get('client_email')}")
+    print(f"   project_id: {creds_dict.get('project_id')}")
+except json.JSONDecodeError as e:
+    print(f"❌ Ошибка парсинга JSON: {e}")
+    sys.exit(1)
+
+try:
+    scopes = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
     creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
     gc = gspread.authorize(creds)
-    print("5. Авторизация через google.oauth2.service_account.Credentials выполнена ✅")
-
     sheet = gc.open_by_key(SHEET_ID).sheet1
-    print("6. Таблица успешно открыта ✅")
+    print("✅ Таблица открыта")
     test_data = sheet.get_all_records()
-    print(f"7. Доступ к данным подтверждён ✅ (записей: {len(test_data)})")
-    print("=== ДИАГНОСТИКА ЗАВЕРШЕНА УСПЕШНО ===")
-
+    print(f"✅ Доступ подтверждён (записей: {len(test_data)})")
+    print("=== ДИАГНОСТИКА ЗАВЕРШЕНА ===")
 except Exception as e:
-    print(f"❌ ОШИБКА ПОДКЛЮЧЕНИЯ К GOOGLE SHEETS:\n{type(e).__name__}: {e}")
-    print("=== ДИАГНОСТИКА ЗАВЕРШЕНА С ОШИБКОЙ ===")
+    print(f"❌ Ошибка подключения: {e}")
     sys.exit(1)
 
 # ===================== НАСТРОЙКА БОТА =====================
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ===================== МОДАЛЬНЫЕ ОКНА (СОКРАЩЕНЫ ДО 5 ПОЛЕЙ) =====================
+# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ (финальный шаг) =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
+    def __init__(self, who_issued: str, rank: str):
+        super().__init__()
+        self.who_issued = who_issued
+        self.rank = rank
+
     nick = ui.TextInput(label='Ник нарушителя', placeholder='Введите ник', required=True)
-    violation = ui.TextInput(label='Вид нарушения', placeholder='Например: Гриферство', required=True)
+    date = ui.TextInput(label='Дата нарушения (ДД.ММ.ГГГГ)', placeholder='Например: 19.06.2026', required=True)
+    violation = ui.TextInput(label='Вид нарушения (пункт правил)', placeholder='Например: 4.1 ОПС', required=True)
     seconds = ui.TextInput(label='Мера наказания (сек.)', placeholder='Только число', required=True)
-    rank = ui.TextInput(label='Звание (с 2496 строки)', required=False)
-    additional = ui.TextInput(
-        label='Дополнительная информация',
-        placeholder='Рецидив, предыдущие нарушения, примечания и т.д.',
-        required=False,
-        style=discord.TextStyle.paragraph
-    )
 
     async def on_submit(self, interaction: discord.Interaction):
+        # Проверка доступа
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+
+        # Парсим дату
+        try:
+            date_obj = datetime.strptime(self.date.value, '%d.%m.%Y')
+            date_str = date_obj.strftime('%Y-%m-%d')
+        except ValueError:
+            await interaction.response.send_message('❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ', ephemeral=True)
+            return
+
+        # Парсим секунды
         try:
             seconds_int = int(self.seconds.value)
         except ValueError:
@@ -86,20 +131,22 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             return
 
         now = datetime.now()
-        who = interaction.user.name
-        # Все дополнительные данные записываем в столбец "Примечания" (индекс 9)
+        # Формируем строку для таблицы (порядок столбцов:
+        # 0:Кем выдано, 1:Ник, 2:Звание, 3:Дата нарушения, 4:Вид нарушения,
+        # 5:Мера наказания (сек.), 6:Срок погашения, 7:Рецидив, 8:Предыдущие,
+        # 9:Примечания, 10:Дополнительные решения)
         row = [
-            who,                                  # Кем выдано
-            self.nick.value,                      # Ник
-            self.rank.value or '',                # Звание
-            now.strftime('%Y-%m-%d %H:%M:%S'),     # Дата нарушения
-            self.violation.value,                 # Вид нарушения
-            seconds_int,                          # Мера наказания (сек.)
-            (now + timedelta(seconds=seconds_int)).strftime('%Y-%m-%d %H:%M:%S'),  # Срок погашения
-            '',                                   # Рецидив (не заполняем отдельно)
-            '',                                   # Предыдущие нарушения
-            self.additional.value or '',          # Примечания (всё доп. информация)
-            ''                                    # Дополнительные решения
+            self.who_issued,                     # Кем выдано
+            self.nick.value,                     # Ник
+            self.rank,                           # Звание
+            date_str,                            # Дата нарушения (без времени)
+            self.violation.value,                # Вид нарушения
+            seconds_int,                         # Мера наказания (сек.)
+            (date_obj + timedelta(seconds=seconds_int)).strftime('%Y-%m-%d'),  # Срок погашения (дата)
+            '',                                  # Рецидив
+            '',                                  # Предыдущие нарушения
+            '',                                  # Примечания
+            ''                                   # Дополнительные решения
         ]
         try:
             sheet.append_row(row)
@@ -107,10 +154,119 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
         except Exception as e:
             await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
 
+# ===================== ВИДЫ ДЛЯ ПОШАГОВОГО ДИАЛОГА =====================
+class WhoIssuedView(ui.View):
+    """Первый шаг: выбор ВП или Адм"""
+    def __init__(self):
+        super().__init__(timeout=300)  # 5 минут на весь диалог
+
+    @ui.button(label='ВП', style=discord.ButtonStyle.primary)
+    async def vp_button(self, interaction: discord.Interaction, button: ui.Button):
+        await self.process_choice(interaction, 'ВП')
+
+    @ui.button(label='Адм', style=discord.ButtonStyle.secondary)
+    async def adm_button(self, interaction: discord.Interaction, button: ui.Button):
+        await self.process_choice(interaction, 'Адм')
+
+    async def process_choice(self, interaction: discord.Interaction, choice: str):
+        if not is_allowed(interaction.user.id) or not is_guild_only(interaction):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        # Создаём новый View для выбора звания и передаём choice
+        view = RankSelectView(choice)
+        embed = discord.Embed(
+            title='Шаг 2: Выберите звание',
+            description='Выберите звание нарушителя из списка:',
+            color=discord.Color.blue()
+        )
+        await interaction.response.edit_message(embed=embed, view=view)
+
+class RankSelectView(ui.View):
+    """Второй шаг: выбор звания из выпадающего списка"""
+    RANKS = [
+        'Новобранец', 'Рядовой', 'Ефрейтор', 'Мл. Сержант', 'Сержант',
+        'Ст. Сержант', 'Старшина', 'Прапорщик', 'Ст. Прапорщик',
+        'Мл. Лейтенант', 'Лейтенант', 'Ст. Лейтенант', 'Капитан',
+        'Майор', 'Подполковник', 'Полковник'
+    ]
+
+    def __init__(self, who_issued: str):
+        super().__init__(timeout=300)
+        self.who_issued = who_issued
+
+        # Создаём селект
+        options = [discord.SelectOption(label=rank, value=rank) for rank in self.RANKS]
+        select = ui.Select(placeholder='Выберите звание...', options=options, custom_id='rank_select')
+        select.callback = self.rank_callback
+        self.add_item(select)
+
+    async def rank_callback(self, interaction: discord.Interaction):
+        selected_rank = interaction.data['values'][0]
+        # Открываем модальное окно с остальными полями
+        await interaction.response.send_modal(AddModal(self.who_issued, selected_rank))
+
+# ===================== ОСНОВНОЕ МЕНЮ (4 кнопки) =====================
+class MenuView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None)
+
+    @ui.button(label='➕ Добавить', style=discord.ButtonStyle.green)
+    async def add_button(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        # Начинаем диалог – отправляем эфемерное сообщение с выбором ВП/Адм
+        embed = discord.Embed(
+            title='Шаг 1: Кем выдано наказание?',
+            description='Выберите один из вариантов:',
+            color=discord.Color.blue()
+        )
+        await interaction.response.send_message(embed=embed, view=WhoIssuedView(), ephemeral=True)
+
+    @ui.button(label='🔍 Найти', style=discord.ButtonStyle.blurple)
+    async def find_button(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        # Здесь можно оставить FindModal, но для простоты пока оставляем старый диалог
+        # Можно переделать аналогично, но пока оставим как есть
+        # Для краткости оставим старый FindModal (его можно позже адаптировать)
+        await interaction.response.send_modal(FindModal())
+
+    @ui.button(label='📋 Последнее', style=discord.ButtonStyle.grey)
+    async def last_button(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        try:
+            records = sheet.get_all_records()
+            if not records:
+                await interaction.response.send_message('Таблица пуста.', ephemeral=True)
+                return
+            last = records[-1]
+            row_num = len(records) + 1
+            msg = f'**Последняя запись (строка {row_num}):**\n'
+            for key, val in last.items():
+                msg += f'**{key}:** {val}\n'
+            await interaction.response.send_message(msg, ephemeral=True)
+        except Exception as e:
+            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
+
+    @ui.button(label='✏️ Изменить', style=discord.ButtonStyle.red)
+    async def edit_button(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        # Пока оставляем старый EditModal (его тоже можно адаптировать позже)
+        await interaction.response.send_modal(EditModal())
+
+# ===================== МОДАЛЬНЫЕ ОКНА ДЛЯ ПОИСКА И ИЗМЕНЕНИЯ (остаются без изменений) =====================
 class FindModal(ui.Modal, title='🔍 Поиск нарушений по нику'):
     nick = ui.TextInput(label='Ник нарушителя', placeholder='Введите ник', required=True)
-
     async def on_submit(self, interaction: discord.Interaction):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
         try:
             records = sheet.get_all_records()
             found = []
@@ -142,24 +298,23 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
     )
 
     async def on_submit(self, interaction: discord.Interaction):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
         try:
             row_idx = int(self.row_num.value)
             if row_idx < 2:
-                await interaction.response.send_message('❌ Номер строки должен быть ≥ 2 (первая строка – заголовки).', ephemeral=True)
+                await interaction.response.send_message('❌ Номер строки должен быть ≥ 2.', ephemeral=True)
                 return
         except ValueError:
             await interaction.response.send_message('❌ Номер строки должен быть числом.', ephemeral=True)
             return
-
         try:
             existing = sheet.row_values(row_idx)
             if not existing:
                 await interaction.response.send_message('❌ Строка не найдена.', ephemeral=True)
                 return
-
-            new_row = existing[:]  # копия
-
-            # Обновляем только те поля, которые заполнены
+            new_row = existing[:]
             if self.nick.value:
                 new_row[1] = self.nick.value
             if self.violation.value:
@@ -168,73 +323,29 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
                 try:
                     sec = int(self.seconds.value)
                     new_row[5] = sec
-                    # Пересчёт срока погашения
-                    violation_date_str = new_row[3]
-                    if violation_date_str:
-                        dt = datetime.strptime(violation_date_str, '%Y-%m-%d %H:%M:%S')
-                        new_row[6] = (dt + timedelta(seconds=sec)).strftime('%Y-%m-%d %H:%M:%S')
+                    # Пересчитываем срок погашения
+                    if new_row[3]:
+                        dt = datetime.strptime(new_row[3], '%Y-%m-%d')
+                        new_row[6] = (dt + timedelta(seconds=sec)).strftime('%Y-%m-%d')
                     else:
                         new_row[6] = ''
                 except ValueError:
                     await interaction.response.send_message('❌ Мера наказания должна быть числом.', ephemeral=True)
                     return
             if self.additional.value:
-                # Записываем дополнительную информацию в столбец "Примечания" (индекс 9)
                 new_row[9] = self.additional.value
-
-            # Обновляем строку в таблице (столбцы A-K)
             sheet.update(f'A{row_idx}:K{row_idx}', [new_row])
-            await interaction.response.send_message(f'✅ Строка {row_idx} успешно обновлена!', ephemeral=True)
+            await interaction.response.send_message(f'✅ Строка {row_idx} обновлена!', ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
-
-# ===================== КНОПКИ МЕНЮ =====================
-class MenuView(ui.View):
-    def __init__(self):
-        super().__init__(timeout=None)
-
-    @ui.button(label='➕ Добавить', style=discord.ButtonStyle.green)
-    async def add_button(self, interaction: discord.Interaction, button: ui.Button):
-        try:
-            await interaction.response.send_modal(AddModal())
-        except Exception as e:
-            print(f"[ERROR] Ошибка в add_button: {e}")
-            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
-
-    @ui.button(label='🔍 Найти', style=discord.ButtonStyle.blurple)
-    async def find_button(self, interaction: discord.Interaction, button: ui.Button):
-        try:
-            await interaction.response.send_modal(FindModal())
-        except Exception as e:
-            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
-
-    @ui.button(label='📋 Последнее', style=discord.ButtonStyle.grey)
-    async def last_button(self, interaction: discord.Interaction, button: ui.Button):
-        try:
-            records = sheet.get_all_records()
-            if not records:
-                await interaction.response.send_message('Таблица пуста.', ephemeral=True)
-                return
-            last = records[-1]
-            row_num = len(records) + 1
-            msg = f'**Последняя запись (строка {row_num}):**\n'
-            for key, val in last.items():
-                msg += f'**{key}:** {val}\n'
-            await interaction.response.send_message(msg, ephemeral=True)
-        except Exception as e:
-            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
-
-    @ui.button(label='✏️ Изменить', style=discord.ButtonStyle.red)
-    async def edit_button(self, interaction: discord.Interaction, button: ui.Button):
-        try:
-            await interaction.response.send_modal(EditModal())
-        except Exception as e:
-            print(f"[ERROR] Ошибка в edit_button: {e}")
             await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
 
 # ===================== КОМАНДА ДЛЯ ОТПРАВКИ МЕНЮ =====================
 @bot.command(name='меню')
+@commands.guild_only()
 async def menu_command(ctx):
+    if not is_allowed(ctx.author.id):
+        await ctx.send('❌ У вас нет доступа к этому боту.')
+        return
     embed = discord.Embed(
         title='📋 Панель управления нарушениями',
         description='Нажмите на кнопку, чтобы выполнить действие:',
@@ -242,13 +353,38 @@ async def menu_command(ctx):
     )
     await ctx.send(embed=embed, view=MenuView())
 
-# ===================== ЗАПУСК =====================
+# ===================== АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ МЕНЮ =====================
+async def send_or_update_menu():
+    channel = bot.get_channel(CHANNEL_ID_INT)
+    if not channel:
+        print(f"⚠️ Канал {CHANNEL_ID_INT} не найден.")
+        return
+
+    embed = discord.Embed(
+        title='📋 Панель управления нарушениями',
+        description='Нажмите на кнопку, чтобы выполнить действие:',
+        color=discord.Color.blue()
+    )
+    view = MenuView()
+
+    try:
+        async for msg in channel.history(limit=20):
+            if msg.author.id == bot.user.id and msg.embeds:
+                for emb in msg.embeds:
+                    if emb.title == '📋 Панель управления нарушениями':
+                        await msg.edit(embed=embed, view=view)
+                        print(f"✅ Меню обновлено (сообщение {msg.id})")
+                        return
+        new_msg = await channel.send(embed=embed, view=view)
+        print(f"✅ Меню отправлено (новое сообщение {new_msg.id})")
+    except Exception as e:
+        print(f"❌ Ошибка при отправке/обновлении меню: {e}")
+
 @bot.event
 async def on_ready():
     print(f'✅ Бот {bot.user} запущен!')
+    await send_or_update_menu()
 
+# ===================== ЗАПУСК =====================
 if __name__ == '__main__':
-    if not TOKEN:
-        print("❌ Ошибка: переменная DISCORD_TOKEN не установлена!")
-        sys.exit(1)
     bot.run(TOKEN)
