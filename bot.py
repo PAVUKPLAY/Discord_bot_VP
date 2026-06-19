@@ -220,7 +220,7 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
-# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ (исправлено) =====================
+# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
     def __init__(self, who_issued: str, rank: str):
         super().__init__()
@@ -237,7 +237,6 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
 
-        # Отложенный ответ, чтобы избежать тайм-аута
         await interaction.response.defer(ephemeral=True)
 
         try:
@@ -290,9 +289,9 @@ class WhoIssuedView(ui.View):
     async def vp_button(self, interaction: discord.Interaction, button: ui.Button):
         await self.process_choice(interaction, 'ВП')
 
-    @ui.button(label='Адм', style=discord.ButtonStyle.secondary)
+    @ui.button(label='Администрация', style=discord.ButtonStyle.secondary)
     async def adm_button(self, interaction: discord.Interaction, button: ui.Button):
-        await self.process_choice(interaction, 'Адм')
+        await self.process_choice(interaction, 'Администрация')
 
     async def process_choice(self, interaction: discord.Interaction, choice: str):
         if not is_allowed(interaction.user.id) or not is_guild_only(interaction):
@@ -308,6 +307,7 @@ class WhoIssuedView(ui.View):
 
 class RankSelectView(ui.View):
     RANKS = [
+        'Штрафник',          # <-- первым
         'Новобранец', 'Рядовой', 'Ефрейтор', 'Мл. Сержант', 'Сержант',
         'Ст. Сержант', 'Старшина', 'Прапорщик', 'Ст. Прапорщик',
         'Мл. Лейтенант', 'Лейтенант', 'Ст. Лейтенант', 'Капитан',
@@ -430,7 +430,6 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
 
-        # Отложенный ответ, чтобы избежать тайм-аута
         await interaction.response.defer(ephemeral=True)
 
         try:
