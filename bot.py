@@ -413,18 +413,21 @@ class FindModal(ui.Modal, title='🔍 Поиск нарушений по ник�
             if nick_col is None:
                 await interaction.response.send_message('❌ Столбец "Ник" не найден.', ephemeral=True)
                 return
+            search_term = self.nick.value.lower()
             for idx, rec in enumerate(records, start=2):
-                if rec.get(nick_col, '').lower() == self.nick.value.lower():
+                # Проверяем, содержится ли поисковый запрос в нике (нестрогое сравнение)
+                if search_term in rec.get(nick_col, '').lower():
                     found.append((idx, rec))
             if not found:
-                await interaction.response.send_message(f'Нарушений для **{self.nick.value}** не найдено.', ephemeral=True)
+                await interaction.response.send_message(f'Ники, содержащие **{self.nick.value}**, не найдены.', ephemeral=True)
                 return
-            msg = f'**Нарушения для {self.nick.value}:**\n'
+            msg = f'**Нарушения для ников, содержащих "{self.nick.value}":**\n'
             for idx, rec in found[:5]:
                 violation = rec.get('вид нарушения', 'не указано')
                 seconds = rec.get('мера наказания (сек.)', '')
                 date = rec.get('дата нарушения', '')
-                msg += f'• Строка {idx}: {violation} — {seconds} сек., дата: {date}\n'
+                nick_val = rec.get(nick_col, 'неизвестно')
+                msg += f'• Строка {idx}: {nick_val} — {violation} — {seconds} сек., дата: {date}\n'
             if len(found) > 5:
                 msg += f'… и ещё {len(found)-5} записей.'
             await interaction.response.send_message(msg, ephemeral=True)
