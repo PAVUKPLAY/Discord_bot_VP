@@ -152,57 +152,6 @@ try:
             apply_formatting_to_range(sheet, 0, rows, 0, cols)
             print(f"✅ Применено форматирование Arial 12 ко всем {rows} строкам")
 
-    # ===== СОЗДАНИЕ РАСКРЫВАЮЩИХСЯ СПИСКОВ ДЛЯ СТОЛБЦОВ "Кем выдано" И "Звание" =====
-    def create_dropdown(sheet_obj, col_name, options_list):
-        # Ищем индекс столбца по имени
-        col_idx = None
-        for i, c in enumerate(header_row):
-            if c.strip() == col_name:
-                col_idx = i
-                break
-        if col_idx is None:
-            print(f"⚠️ Столбец '{col_name}' не найден для создания списка.")
-            return
-        # Создаём правило проверки данных
-        body = {
-            "requests": [
-                {
-                    "setDataValidation": {
-                        "range": {
-                            "sheetId": sheet_obj.id,
-                            "startRowIndex": 1,  # начиная со второй строки (первая — заголовок)
-                            "endRowIndex": rows,  # до последней имеющейся строки
-                            "startColumnIndex": col_idx,
-                            "endColumnIndex": col_idx + 1
-                        },
-                        "rule": {
-                            "condition": {
-                                "type": "ONE_OF_LIST",
-                                "values": [{"userEnteredValue": opt} for opt in options_list]
-                            },
-                            "showCustomUi": True,
-                            "strict": True
-                        }
-                    }
-                }
-            ]
-        }
-        sheet_obj.spreadsheet.batch_update(body)
-        print(f"✅ Раскрывающийся список для столбца '{col_name}' создан (вариантов: {len(options_list)})")
-
-    # Список для "Кем выдано"
-    who_options = ['ВП', 'Адм']
-    create_dropdown(sheet, 'Кем выдано', who_options)
-
-    # Список для "Звание"
-    rank_options = [
-        'Новобранец', 'Рядовой', 'Ефрейтор', 'Мл. Сержант', 'Сержант',
-        'Ст. Сержант', 'Старшина', 'Прапорщик', 'Ст. Прапорщик',
-        'Мл. Лейтенант', 'Лейтенант', 'Ст. Лейтенант', 'Капитан',
-        'Майор', 'Подполковник', 'Полковник'
-    ]
-    create_dropdown(sheet, 'Звание', rank_options)
-
     print("=== ДИАГНОСТИКА ЗАВЕРШЕНА ===")
 
 except Exception as e:
@@ -254,18 +203,6 @@ def get_column_index():
             col_name = f"{col_name}_{suffix}"
         col_idx[col_name] = i
     return col_idx
-
-def get_last_nonempty_row():
-    """Возвращает номер последней строки (1-based), которая содержит какие-либо данные.
-       Если данных нет (только заголовки), возвращает 1."""
-    all_vals = sheet.get_all_values()
-    if len(all_vals) <= 1:
-        return 1  # только заголовок
-    # Проверяем строки с конца
-    for i in range(len(all_vals)-1, 0, -1):
-        if any(all_vals[i]):
-            return i + 1  # 1-based индекс следующей строки
-    return 1  # если нет данных
 
 def format_row(sheet_obj, row_index_1based):
     """Применяет Arial 12 к указанной строке (1-based)."""
@@ -346,13 +283,12 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             if col_name in col_idx:
                 row[col_idx[col_name]] = value
 
-        # Находим последнюю непустую строку и вставляем после неё
-        last_row = get_last_nonempty_row()
-        insert_pos = last_row + 1  # следующая строка
         try:
-            sheet.insert_row(row, index=insert_pos, value_input_option='USER_ENTERED')
-            # Применяем форматирование к вставленной строке
-            format_row(sheet, insert_pos)
+            # Добавляем строку в конец таблицы
+            sheet.append_row(row, value_input_option='USER_ENTERED')
+            # Применяем форматирование к последней строке
+            last_row = len(sheet.get_all_values())
+            format_row(sheet, last_row)
             await interaction.response.send_message(f'✅ Нарушение для **{self.nick.value}** добавлено!', ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
