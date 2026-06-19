@@ -307,7 +307,7 @@ class WhoIssuedView(ui.View):
 
 class RankSelectView(ui.View):
     RANKS = [
-        'Штрафник',          # <-- первым
+        'Штрафник',
         'Новобранец', 'Рядовой', 'Ефрейтор', 'Мл. Сержант', 'Сержант',
         'Ст. Сержант', 'Старшина', 'Прапорщик', 'Ст. Прапорщик',
         'Мл. Лейтенант', 'Лейтенант', 'Ст. Лейтенант', 'Капитан',
@@ -327,7 +327,7 @@ class RankSelectView(ui.View):
         selected_rank = interaction.data['values'][0]
         await interaction.response.send_modal(AddModal(self.who_issued, selected_rank))
 
-# ===================== ОСНОВНОЕ МЕНЮ =====================
+# ===================== ОСНОВНОЕ МЕНЮ (исправленное) =====================
 class MenuView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
@@ -337,12 +337,13 @@ class MenuView(ui.View):
         if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)
         embed = discord.Embed(
             title='Шаг 1: Кем выдано наказание?',
             description='Выберите один из вариантов:',
             color=discord.Color.blue()
         )
-        await interaction.response.send_message(embed=embed, view=WhoIssuedView(), ephemeral=True)
+        await interaction.followup.send(embed=embed, view=WhoIssuedView(), ephemeral=True)
 
     @ui.button(label='🔍 Найти', style=discord.ButtonStyle.blurple)
     async def find_button(self, interaction: discord.Interaction, button: ui.Button):
@@ -356,19 +357,20 @@ class MenuView(ui.View):
         if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
+        await interaction.response.defer(ephemeral=True)
         try:
             records = get_current_records()
             if not records:
-                await interaction.response.send_message('Таблица пуста.', ephemeral=True)
+                await interaction.followup.send('Таблица пуста.', ephemeral=True)
                 return
             last = records[-1]
             row_num = len(records) + 1
             msg = f'**Последняя запись (строка {row_num}):**\n'
             for key, val in last.items():
                 msg += f'**{key}:** {val}\n'
-            await interaction.response.send_message(msg, ephemeral=True)
+            await interaction.followup.send(msg, ephemeral=True)
         except Exception as e:
-            await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
+            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
     @ui.button(label='✏️ Изменить', style=discord.ButtonStyle.red)
     async def edit_button(self, interaction: discord.Interaction, button: ui.Button):
