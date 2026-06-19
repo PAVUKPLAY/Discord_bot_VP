@@ -117,9 +117,8 @@ try:
 
     print(f"✅ Данные прочитаны (записей: {len(records)}, столбцов: {len(column_index)})")
 
-    # ===== ПРИМЕНЕНИЕ ФОРМАТИРОВАНИЯ ARIAL 12 КО ВСЕМ ДАННЫМ =====
+    # ===== ПРИМЕНЕНИЕ ФОРМАТИРОВАНИЯ ARIAL 12 =====
     def apply_formatting_to_range(sheet_obj, start_row, end_row, start_col, end_col):
-        """Применяет шрифт Arial 12 к указанному диапазону (индексы 0-based, end исключается)."""
         body = {
             "requests": [
                 {
@@ -146,13 +145,63 @@ try:
         }
         sheet_obj.spreadsheet.batch_update(body)
 
-    # Применяем ко всем существующим данным
     if len(all_values) > 0 and len(all_values[0]) > 0:
         rows = len(all_values)
         cols = max(len(row) for row in all_values) if all_values else 0
         if rows > 0 and cols > 0:
             apply_formatting_to_range(sheet, 0, rows, 0, cols)
             print(f"✅ Применено форматирование Arial 12 ко всем {rows} строкам")
+
+    # ===== СОЗДАНИЕ РАСКРЫВАЮЩИХСЯ СПИСКОВ ДЛЯ СТОЛБЦОВ "Кем выдано" И "Звание" =====
+    def create_dropdown(sheet_obj, col_name, options_list):
+        # Ищем индекс столбца по имени
+        col_idx = None
+        for i, c in enumerate(header_row):
+            if c.strip() == col_name:
+                col_idx = i
+                break
+        if col_idx is None:
+            print(f"⚠️ Столбец '{col_name}' не найден для создания списка.")
+            return
+        # Создаём правило проверки данных
+        body = {
+            "requests": [
+                {
+                    "setDataValidation": {
+                        "range": {
+                            "sheetId": sheet_obj.id,
+                            "startRowIndex": 1,  # начиная со второй строки (первая — заголовок)
+                            "endRowIndex": rows,  # до последней имеющейся строки
+                            "startColumnIndex": col_idx,
+                            "endColumnIndex": col_idx + 1
+                        },
+                        "rule": {
+                            "condition": {
+                                "type": "ONE_OF_LIST",
+                                "values": [{"userEnteredValue": opt} for opt in options_list]
+                            },
+                            "showCustomUi": True,
+                            "strict": True
+                        }
+                    }
+                }
+            ]
+        }
+        sheet_obj.spreadsheet.batch_update(body)
+        print(f"✅ Раскрывающийся список для столбца '{col_name}' создан (вариантов: {len(options_list)})")
+
+    # Список для "Кем выдано"
+    who_options = ['ВП', 'Адм']
+    create_dropdown(sheet, 'Кем выдано', who_options)
+
+    # Список для "Звание"
+    rank_options = [
+        'Новобранец', 'Рядовой', 'Ефрейтор', 'Мл. Сержант', 'Сержант',
+        'Ст. Сержант', 'Старшина', 'Прапорщик', 'Ст. Прапорщик',
+        'Мл. Лейтенант', 'Лейтенант', 'Ст. Лейтенант', 'Капитан',
+        'Майор', 'Подполковник', 'Полковник'
+    ]
+    create_dropdown(sheet, 'Звание', rank_options)
 
     print("=== ДИАГНОСТИКА ЗАВЕРШЕНА ===")
 
@@ -206,24 +255,34 @@ def get_column_index():
         col_idx[col_name] = i
     return col_idx
 
-def format_last_row(sheet_obj):
-    """Применяет Arial 12 к последней строке (все столбцы с данными)."""
+def get_last_nonempty_row():
+    """Возвращает номер последней строки (1-based), которая содержит какие-либо данные.
+       Если данных нет (только заголовки), возвращает 1."""
+    all_vals = sheet.get_all_values()
+    if len(all_vals) <= 1:
+        return 1  # только заголовок
+    # Проверяем строки с конца
+    for i in range(len(all_vals)-1, 0, -1):
+        if any(all_vals[i]):
+            return i + 1  # 1-based индекс следующей строки
+    return 1  # если нет данных
+
+def format_row(sheet_obj, row_index_1based):
+    """Применяет Arial 12 к указанной строке (1-based)."""
     all_vals = sheet_obj.get_all_values()
-    if len(all_vals) == 0:
+    if row_index_1based > len(all_vals):
         return
-    row_num = len(all_vals)  # 1-based индекс последней строки
     cols = max(len(row) for row in all_vals) if all_vals else 0
-    if row_num == 0 or cols == 0:
+    if cols == 0:
         return
-    # Применяем к строке row_num (индексы: start = row_num-1, end = row_num)
     body = {
         "requests": [
             {
                 "repeatCell": {
                     "range": {
                         "sheetId": sheet_obj.id,
-                        "startRowIndex": row_num - 1,
-                        "endRowIndex": row_num,
+                        "startRowIndex": row_index_1based - 1,
+                        "endRowIndex": row_index_1based,
                         "startColumnIndex": 0,
                         "endColumnIndex": cols
                     },
@@ -287,10 +346,13 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             if col_name in col_idx:
                 row[col_idx[col_name]] = value
 
+        # Находим последнюю непустую строку и вставляем после неё
+        last_row = get_last_nonempty_row()
+        insert_pos = last_row + 1  # следующая строка
         try:
-            sheet.append_row(row, value_input_option='USER_ENTERED')
-            # Применяем форматирование к добавленной строке
-            format_last_row(sheet)
+            sheet.insert_row(row, index=insert_pos, value_input_option='USER_ENTERED')
+            # Применяем форматирование к вставленной строке
+            format_row(sheet, insert_pos)
             await interaction.response.send_message(f'✅ Нарушение для **{self.nick.value}** добавлено!', ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
@@ -495,8 +557,7 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
 
             cell_range = f'A{row_idx}:{chr(65 + len(col_idx) - 1)}{row_idx}'
             sheet.update(cell_range, [new_row], value_input_option='USER_ENTERED')
-            # После обновления применяем форматирование ко всей строке (чтобы новый стиль тоже был Arial 12)
-            format_last_row(sheet)
+            format_row(sheet, row_idx)
             await interaction.response.send_message(f'✅ Строка {row_idx} обновлена!', ephemeral=True)
         except Exception as e:
             await interaction.response.send_message(f'❌ Ошибка: {e}', ephemeral=True)
