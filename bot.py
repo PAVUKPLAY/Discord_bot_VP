@@ -350,8 +350,10 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
 
         # Проверяем активные нарушения
         active = get_active_punishments(nick)
+        print(f"[DEBUG] Найдено активных нарушений для {nick}: {len(active)}")  # отладка
 
         if not active:
+            await interaction.followup.send(f'ℹ️ Активных нарушений для **{nick}** не найдено. Нарушение будет добавлено без учёта рецидива.', ephemeral=True)
             await self.insert_punishment(interaction, nick, date_str, self.violation.value, seconds_int, date_obj, '', '')
             return
 
@@ -447,7 +449,6 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
                 expiration_col = col_indices['срок погашения']
                 date_cell = f"{chr(65 + date_col)}{insert_pos}"
                 formula_a1 = f"={date_cell}+21"
-                # Используем именованные аргументы для устранения предупреждения
                 sheet.update(range_name=f"{chr(65 + expiration_col)}{insert_pos}",
                              values=[[formula_a1]],
                              value_input_option='USER_ENTERED')
