@@ -160,9 +160,8 @@ except Exception as e:
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ТАБЛИЦЕЙ =====================
+# ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====================
 def get_current_records_with_rows():
-    """Возвращает список записей с ключом 'row_num' (реальный номер строки)."""
     all_values = sheet.get_all_values()
     if len(all_values) <= 1:
         return []
@@ -228,7 +227,7 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
-# ===================== МОДАЛЬНЫЕ ОКНА (ДОБАВЛЕНИЕ, ПОИСК, ИЗМЕНЕНИЕ) =====================
+# ===================== МОДАЛЬНЫЕ ОКНА =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
     def __init__(self, who_issued: str, rank: str):
         super().__init__()
@@ -430,7 +429,7 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
         except Exception as e:
             await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
-# ===================== ВИДЫ ДЛЯ ПОШАГОВОГО ДИАЛОГА (ВП/Администрация, Звание) =====================
+# ===================== ВИДЫ ДЛЯ ПОШАГОВОГО ДИАЛОГА =====================
 class WhoIssuedView(ui.View):
     def __init__(self):
         super().__init__(timeout=300)
@@ -476,7 +475,7 @@ class RankSelectView(ui.View):
         selected_rank = interaction.data['values'][0]
         await interaction.response.send_modal(AddModal(self.who_issued, selected_rank))
 
-# ===================== ПАГИНАЦИЯ ДЛЯ ИСТОРИИ =====================
+# ===================== ИСТОРИЯ С ПАГИНАЦИЕЙ (исправлена) =====================
 class HistoryView(ui.View):
     def __init__(self, records, page=0, per_page=5):
         super().__init__(timeout=120)
@@ -484,6 +483,22 @@ class HistoryView(ui.View):
         self.page = page
         self.per_page = per_page
         self.max_page = max(0, (len(records) - 1) // per_page)
+        # Заранее получаем индексы нужных столбцов, чтобы не искать каждый раз
+        self.header_row = sheet.get_all_values()[0]
+        self.nick_idx = self._find_col('ник')
+        self.who_idx = self._find_col('кем выдано')
+        self.rank_idx = self._find_col('звание')
+        self.violation_idx = self._find_col('вид нарушения')
+        self.date_idx = self._find_col('дата нарушения')
+        self.additional_idx = self._find_col('дополнительные решения')
+        if self.additional_idx is None:
+            self.additional_idx = self._find_col('примечания')
+
+    def _find_col(self, pattern):
+        for i, h in enumerate(self.header_row):
+            if pattern.lower() in h.lower().strip():
+                return i
+        return None
 
     def get_embed(self):
         start = self.page * self.per_page
@@ -497,13 +512,14 @@ class HistoryView(ui.View):
             embed.description = "Нет записей."
             return embed
         for rec in page_records:
-            row_num = rec.get('row_num', '?')
-            nick = rec.get('ник', '')
-            who = rec.get('кем выдано', '')
-            rank = rec.get('звание', '')
-            violation = rec.get('вид нарушения', '')
-            date = rec.get('дата нарушения', '')
-            additional = rec.get('дополнительные решения', '') or rec.get('примечания', '')
+            row_num = rec['row_num']
+            row_data = sheet.row_values(row_num)
+            nick = row_data[self.nick_idx] if self.nick_idx is not None and self.nick_idx < len(row_data) else ''
+            who = row_data[self.who_idx] if self.who_idx is not None and self.who_idx < len(row_data) else ''
+            rank = row_data[self.rank_idx] if self.rank_idx is not None and self.rank_idx < len(row_data) else ''
+            violation = row_data[self.violation_idx] if self.violation_idx is not None and self.violation_idx < len(row_data) else ''
+            date = row_data[self.date_idx] if self.date_idx is not None and self.date_idx < len(row_data) else ''
+            additional = row_data[self.additional_idx] if self.additional_idx is not None and self.additional_idx < len(row_data) else ''
             line = f"**{nick}**"
             if rank:
                 line += f" (Звание: {rank})"
@@ -541,7 +557,7 @@ class HistoryView(ui.View):
         except Exception as e:
             await interaction.followup.send(f"Ошибка при удалении: {e}", ephemeral=True)
 
-# ===================== ОСНОВНОЕ МЕНЮ (без кнопки «Последнее») =====================
+# ===================== ОСНОВНОЕ МЕНЮ (без «Последнее») =====================
 class MenuView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
