@@ -298,7 +298,7 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
-# ===================== ИСПРАВЛЕННАЯ ФУНКЦИЯ ПОИСКА АКТИВНЫХ НАРУШЕНИЙ =====================
+# ===================== ФУНКЦИЯ ПОИСКА АКТИВНЫХ НАРУШЕНИЙ (ТОЛЬКО ПО НИКУ) =====================
 def get_active_punishments(nick):
     """Возвращает список активных нарушений (срок погашения >= сегодня) для данного ника."""
     records = get_current_records_with_rows()
@@ -306,10 +306,8 @@ def get_active_punishments(nick):
         print("[DEBUG] Нет записей в таблице.")
         return []
 
-    # Выводим заголовки для диагностики
     print("[DEBUG] Заголовки таблицы:", list(records[0].keys()))
 
-    # Определяем ключи для ника и срока погашения по частичному совпадению
     nick_key = None
     exp_key = None
     for key in records[0].keys():
@@ -320,20 +318,22 @@ def get_active_punishments(nick):
 
     print(f"[DEBUG] Найден ключ для ника: {nick_key}, для срока погашения: {exp_key}")
 
+    # Выводим все ники для диагностики
+    all_nicks = [rec.get(nick_key, '') for rec in records if nick_key in rec]
+    print(f"[DEBUG] Все ники в таблице: {all_nicks}")
+
     if nick_key is None or exp_key is None:
-        print("[DEBUG] Не удалось найти столбцы 'Ник' или 'Срок погашения' в заголовках.")
+        print("[DEBUG] Не удалось найти столбцы 'Ник' или 'Срок погашения'.")
         return []
 
     active = []
     today = datetime.now().date()
     for rec in records:
-        # Проверяем ник
         if rec.get(nick_key, '').lower() == nick.lower():
             exp_str = rec.get(exp_key, '').strip()
             print(f"[DEBUG] Нарушение: {rec}, Срок погашения: '{exp_str}'")
             if not exp_str:
                 continue
-            # Пытаемся парсить дату в разных форматах
             parsed = None
             for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%Y/%m/%d', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%d.%m.%Y %H:%M:%S'):
                 try:
@@ -383,7 +383,6 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
 
         nick = self.nick.value.strip()
         active = get_active_punishments(nick)
-        print(f"[DEBUG] Найдено активных нарушений для {nick}: {len(active)}")
 
         if not active:
             await interaction.followup.send(f'ℹ️ Активных нарушений для **{nick}** не найдено. Нарушение будет добавлено без учёта рецидива.', ephemeral=True)
