@@ -298,19 +298,24 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
+# ===================== ИСПРАВЛЕННАЯ ФУНКЦИЯ ПОИСКА АКТИВНЫХ НАРУШЕНИЙ =====================
 def get_active_punishments(nick):
     """Возвращает список активных нарушений (срок погашения >= сегодня) для данного ника."""
     records = get_current_records_with_rows()
     if not records:
+        print("[DEBUG] Нет записей в таблице.")
         return []
+
+    # Выводим заголовки для диагностики
+    print("[DEBUG] Заголовки таблицы:", list(records[0].keys()))
 
     # Определяем ключи для ника и срока погашения по частичному совпадению
     nick_key = None
     exp_key = None
     for key in records[0].keys():
-        if 'ник' in key:
+        if 'ник' in key.lower():
             nick_key = key
-        if 'срок погашения' in key:
+        if 'срок погашения' in key.lower():
             exp_key = key
 
     print(f"[DEBUG] Найден ключ для ника: {nick_key}, для срока погашения: {exp_key}")
@@ -322,15 +327,27 @@ def get_active_punishments(nick):
     active = []
     today = datetime.now().date()
     for rec in records:
+        # Проверяем ник
         if rec.get(nick_key, '').lower() == nick.lower():
-            exp_str = rec.get(exp_key, '')
-            if exp_str:
+            exp_str = rec.get(exp_key, '').strip()
+            print(f"[DEBUG] Нарушение: {rec}, Срок погашения: '{exp_str}'")
+            if not exp_str:
+                continue
+            # Пытаемся парсить дату в разных форматах
+            parsed = None
+            for fmt in ('%Y-%m-%d', '%d.%m.%Y', '%Y/%m/%d', '%d/%m/%Y', '%Y-%m-%d %H:%M:%S', '%d.%m.%Y %H:%M:%S'):
                 try:
-                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
-                    if exp_date >= today:
-                        active.append(rec)
-                except Exception as e:
-                    print(f"[DEBUG] Ошибка парсинга даты '{exp_str}': {e}")
+                    parsed = datetime.strptime(exp_str, fmt).date()
+                    break
+                except ValueError:
+                    continue
+            if parsed is None:
+                print(f"[DEBUG] Не удалось распарсить дату: '{exp_str}'")
+                continue
+            if parsed >= today:
+                active.append(rec)
+                print(f"[DEBUG] Нарушение активно: {rec}")
+    print(f"[DEBUG] Итого активных нарушений для {nick}: {len(active)}")
     return active
 
 # ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ =====================
