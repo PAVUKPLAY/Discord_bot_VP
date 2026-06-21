@@ -301,18 +301,36 @@ def format_row(sheet_obj, row_index_1based):
 def get_active_punishments(nick):
     """Возвращает список активных нарушений (срок погашения >= сегодня) для данного ника."""
     records = get_current_records_with_rows()
+    if not records:
+        return []
+
+    # Определяем ключи для ника и срока погашения по частичному совпадению
+    nick_key = None
+    exp_key = None
+    for key in records[0].keys():
+        if 'ник' in key:
+            nick_key = key
+        if 'срок погашения' in key:
+            exp_key = key
+
+    print(f"[DEBUG] Найден ключ для ника: {nick_key}, для срока погашения: {exp_key}")
+
+    if nick_key is None or exp_key is None:
+        print("[DEBUG] Не удалось найти столбцы 'Ник' или 'Срок погашения' в заголовках.")
+        return []
+
     active = []
     today = datetime.now().date()
     for rec in records:
-        if rec.get('ник', '').lower() == nick.lower():
-            expiration_str = rec.get('срок погашения', '')
-            if expiration_str:
+        if rec.get(nick_key, '').lower() == nick.lower():
+            exp_str = rec.get(exp_key, '')
+            if exp_str:
                 try:
-                    exp_date = datetime.strptime(expiration_str, '%Y-%m-%d').date()
+                    exp_date = datetime.strptime(exp_str, '%Y-%m-%d').date()
                     if exp_date >= today:
                         active.append(rec)
-                except:
-                    pass
+                except Exception as e:
+                    print(f"[DEBUG] Ошибка парсинга даты '{exp_str}': {e}")
     return active
 
 # ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ =====================
@@ -347,17 +365,14 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             return
 
         nick = self.nick.value.strip()
-
-        # Проверяем активные нарушения
         active = get_active_punishments(nick)
-        print(f"[DEBUG] Найдено активных нарушений для {nick}: {len(active)}")  # отладка
+        print(f"[DEBUG] Найдено активных нарушений для {nick}: {len(active)}")
 
         if not active:
             await interaction.followup.send(f'ℹ️ Активных нарушений для **{nick}** не найдено. Нарушение будет добавлено без учёта рецидива.', ephemeral=True)
             await self.insert_punishment(interaction, nick, date_str, self.violation.value, seconds_int, date_obj, '', '')
             return
 
-        # Показываем список активных нарушений
         lines = []
         for i, rec in enumerate(active, start=1):
             violation = rec.get('вид нарушения', '')
