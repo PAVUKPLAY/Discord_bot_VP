@@ -298,7 +298,24 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
-# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ (исправленное) =====================
+def get_active_punishments(nick):
+    """Возвращает список активных нарушений (срок погашения >= сегодня) для данного ника."""
+    records = get_current_records_with_rows()
+    active = []
+    today = datetime.now().date()
+    for rec in records:
+        if rec.get('ник', '').lower() == nick.lower():
+            expiration_str = rec.get('срок погашения', '')
+            if expiration_str:
+                try:
+                    exp_date = datetime.strptime(expiration_str, '%Y-%m-%d').date()
+                    if exp_date >= today:
+                        active.append(rec)
+                except:
+                    pass
+    return active
+
+# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ (с выбором активных) =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
     def __init__(self, who_issued: str, rank: str):
         super().__init__()
@@ -316,6 +333,7 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             return
         await interaction.response.defer(ephemeral=True)
 
+        # Получаем данные из модального окна
         try:
             date_obj = datetime.strptime(self.date.value, '%d.%m.%Y')
             date_str = date_obj.strftime('%Y-%m-%d')
@@ -329,8 +347,80 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             await interaction.followup.send('❌ Мера наказания должна быть числом!', ephemeral=True)
             return
 
+        nick = self.nick.value.strip()
+
+        # Проверяем активные нарушения для этого ника
+        active = get_active_punishments(nick)
+
+        # Если активных нарушений нет – добавляем сразу
+        if not active:
+            await self.insert_punishment(interaction, nick, date_str, self.violation.value, seconds_int, date_obj, '')
+            return
+
+        # Если есть – показываем список и просим выбрать номера
+        # Формируем сообщение со списком
+        lines = []
+        for i, rec in enumerate(active, start=1):
+            violation = rec.get('вид нарушения', '')
+            date = rec.get('дата нарушения', '')
+            expiration = rec.get('срок погашения', '')
+            lines.append(f"**{i}.** {violation} (дата: {date}, срок: {expiration})")
+        list_msg = "\n".join(lines)
+
+        prompt = f"🔍 Найдены активные нарушения для **{nick}**:\n\n{list_msg}\n\nВведите номера нарушений через запятую (например, `1,3`), которые нужно учесть как **рецидив** и **предыдущие нарушения**.\nЕсли не нужно учитывать ни одно – введите `0` или `нет`."
+
+        # Отправляем сообщение с запросом
+        await interaction.followup.send(prompt, ephemeral=True)
+
+        # Ожидаем ответ от пользователя
+        def check(m):
+            return m.author.id == interaction.user.id and m.channel.id == interaction.channel.id
+
+        try:
+            msg = await bot.wait_for('message', timeout=120.0, check=check)
+        except TimeoutError:
+            await interaction.followup.send('⏰ Время ожидания истекло. Попробуйте снова.', ephemeral=True)
+            return
+
+        # Парсим номера
+        selected_indices = []
+        raw = msg.content.strip()
+        if raw.lower() in ('0', 'нет', 'no'):
+            selected_indices = []
+        else:
+            parts = [p.strip() for p in raw.split(',') if p.strip()]
+            for part in parts:
+                try:
+                    num = int(part)
+                    if 1 <= num <= len(active):
+                        selected_indices.append(num)
+                except ValueError:
+                    pass
+            if not selected_indices:
+                await interaction.followup.send('❌ Неверный ввод. Попробуйте снова.', ephemeral=True)
+                return
+
+        # Формируем строки для "Рецидив" и "Предыдущие нарушения"
+        recidivism_dates = []
+        prev_violations = []
+        for idx in selected_indices:
+            rec = active[idx-1]
+            recidivism_dates.append(rec.get('дата нарушения', ''))
+            prev_violations.append(rec.get('вид нарушения', ''))
+
+        recidivism_str = ', '.join(recidivism_dates)
+        prev_violations_str = ', '.join(prev_violations)
+
+        # Добавляем нарушение с заполненными полями
+        await self.insert_punishment(interaction, nick, date_str, self.violation.value, seconds_int, date_obj,
+                                     recidivism_str, prev_violations_str)
+
+    async def insert_punishment(self, interaction, nick, date_str, violation, seconds_int, date_obj,
+                                recidivism_str, prev_violations_str=''):
+        """Вставляет новую запись с указанными данными."""
         col_indices = {}
-        for pattern in ['кем выдано', 'ник', 'звание', 'дата нарушения', 'вид нарушения', 'мера наказания (сек.)', 'срок погашения']:
+        for pattern in ['кем выдано', 'ник', 'звание', 'дата нарушения', 'вид нарушения',
+                        'мера наказания (сек.)', 'срок погашения', 'рецидив', 'предыдущие нарушения']:
             idx = find_column_index_by_name(pattern)
             if idx is not None:
                 col_indices[pattern] = idx
@@ -340,11 +430,13 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
 
         mapping = {
             'кем выдано': self.who_issued,
-            'ник': self.nick.value,
+            'ник': nick,
             'звание': self.rank,
             'дата нарушения': date_str,
-            'вид нарушения': self.violation.value,
-            'мера наказания (сек.)': str(seconds_int)
+            'вид нарушения': violation,
+            'мера наказания (сек.)': str(seconds_int),
+            'рецидив': recidivism_str,
+            'предыдущие нарушения': prev_violations_str
         }
         for key, value in mapping.items():
             if key in col_indices:
@@ -364,11 +456,10 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
                 expiration_col = col_indices['срок погашения']
                 date_cell = f"{chr(65 + date_col)}{insert_pos}"
                 formula_a1 = f"={date_cell}+21"
-                # Исправлено: передаём список списков для одной ячейки
                 sheet.update(f"{chr(65 + expiration_col)}{insert_pos}", [[formula_a1]], value_input_option='USER_ENTERED')
 
             format_row(sheet, insert_pos)
-            await interaction.followup.send(f'✅ Нарушение для **{self.nick.value}** добавлено!', ephemeral=True)
+            await interaction.followup.send(f'✅ Нарушение для **{nick}** добавлено!', ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
