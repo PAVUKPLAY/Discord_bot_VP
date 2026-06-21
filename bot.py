@@ -160,9 +160,9 @@ except Exception as e:
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix='!', intents=intents)
 
-# ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====================
+# ===================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ДЛЯ РАБОТЫ С ТАБЛИЦЕЙ =====================
 def get_current_records():
-    """Возвращает все записи из таблицы (все строки с данными, начиная со второй)."""
+    """Возвращает все записи (словари без номера строки) для совместимости."""
     all_values = sheet.get_all_values()
     if len(all_values) <= 1:
         return []
@@ -181,8 +181,27 @@ def get_current_records():
         records.append(rec)
     return records
 
+def get_current_records_with_rows():
+    """Возвращает список записей с ключом 'row_num' (реальный номер строки)."""
+    all_values = sheet.get_all_values()
+    if len(all_values) <= 1:
+        return []
+    header_row = all_values[0]
+    col_idx = {}
+    for i, col_name in enumerate(header_row):
+        normalized = col_name.strip().lower()
+        col_idx[normalized] = i
+    records = []
+    for row_num, row in enumerate(all_values[1:], start=2):
+        if not any(row):
+            continue
+        rec = {'row_num': row_num}
+        for col_name, idx in col_idx.items():
+            rec[col_name] = row[idx] if idx < len(row) else ''
+        records.append(rec)
+    return records
+
 def find_column_index_by_name(col_name_pattern):
-    """Находит индекс столбца по частичному совпадению без учёта регистра."""
     header_row = sheet.get_all_values()[0]
     for i, header in enumerate(header_row):
         if col_name_pattern.lower() in header.lower().strip():
@@ -190,8 +209,6 @@ def find_column_index_by_name(col_name_pattern):
     return None
 
 def get_last_nonempty_row():
-    """Возвращает номер (1-based) последней строки, содержащей данные.
-       Если данных нет (только заголовок), возвращает 1."""
     all_vals = sheet.get_all_values()
     for i in range(len(all_vals)-1, -1, -1):
         if any(all_vals[i]):
@@ -199,7 +216,6 @@ def get_last_nonempty_row():
     return 1
 
 def format_row(sheet_obj, row_index_1based):
-    """Применяет шрифт Arial 12 к указанной строке (1-based)."""
     all_vals = sheet_obj.get_all_values()
     if row_index_1based > len(all_vals):
         return
@@ -232,7 +248,7 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
-# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ =====================
+# ===================== МОДАЛЬНЫЕ ОКНА (ДОБАВЛЕНИЕ, ПОИСК, ИЗМЕНЕНИЕ) =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
     def __init__(self, who_issued: str, rank: str):
         super().__init__()
@@ -248,25 +264,20 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
         if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
-
         await interaction.response.defer(ephemeral=True)
-
         try:
             date_obj = datetime.strptime(self.date.value, '%d.%m.%Y')
             date_str = date_obj.strftime('%Y-%m-%d')
         except ValueError:
             await interaction.followup.send('❌ Неверный формат даты. Используйте ДД.ММ.ГГГГ', ephemeral=True)
             return
-
         try:
             seconds_int = int(self.seconds.value)
         except ValueError:
             await interaction.followup.send('❌ Мера наказания должна быть числом!', ephemeral=True)
             return
-
         header_row = sheet.get_all_values()[0]
         row = [''] * len(header_row)
-
         mapping = {
             'кем выдано': self.who_issued,
             'ник': self.nick.value,
@@ -276,17 +287,14 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             'мера наказания (сек.)': str(seconds_int),
             'срок погашения': (date_obj + timedelta(seconds=seconds_int)).strftime('%Y-%m-%d')
         }
-
         for pattern, value in mapping.items():
             idx = find_column_index_by_name(pattern)
             if idx is not None:
                 row[idx] = value
             else:
                 print(f"⚠️ Столбец с шаблоном '{pattern}' не найден в заголовках.")
-
         last_row = get_last_nonempty_row()
         insert_pos = last_row + 1
-
         try:
             sheet.insert_row(row, index=insert_pos, value_input_option='USER_ENTERED')
             format_row(sheet, insert_pos)
@@ -294,7 +302,151 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
         except Exception as e:
             await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
-# ===================== ВИДЫ ДЛЯ ПОШАГОВОГО ДИАЛОГА =====================
+class FindModal(ui.Modal, title='🔍 Поиск нарушений по нику'):
+    nick = ui.TextInput(label='Ник нарушителя', placeholder='Введите ник', required=True)
+    async def on_submit(self, interaction: discord.Interaction):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            records = get_current_records_with_rows()  # используем с номерами строк
+            if not records:
+                await interaction.followup.send('Таблица пуста.', ephemeral=True)
+                return
+            header_row = sheet.get_all_values()[0]
+            def find_col(pattern):
+                for i, h in enumerate(header_row):
+                    if pattern.lower() in h.lower().strip():
+                        return i
+                return None
+            nick_idx = find_col('ник')
+            violation_idx = find_col('вид нарушения')
+            seconds_idx = find_col('мера наказания')
+            date_idx = find_col('дата нарушения')
+            rank_idx = find_col('звание')
+            additional_idx = find_col('дополнительные решения')
+            if additional_idx is None:
+                additional_idx = find_col('примечания')
+            if nick_idx is None:
+                await interaction.followup.send('❌ Столбец "Ник" не найден.', ephemeral=True)
+                return
+            search_term = self.nick.value.lower()
+            found = []
+            for rec in records:
+                row_num = rec['row_num']
+                row_data = sheet.row_values(row_num)
+                nick_val = row_data[nick_idx] if nick_idx < len(row_data) else ''
+                if search_term in nick_val.lower():
+                    found.append({
+                        'row_num': row_num,
+                        'nick': nick_val,
+                        'violation': row_data[violation_idx] if violation_idx is not None and violation_idx < len(row_data) else '',
+                        'seconds': row_data[seconds_idx] if seconds_idx is not None and seconds_idx < len(row_data) else '',
+                        'date': row_data[date_idx] if date_idx is not None and date_idx < len(row_data) else '',
+                        'rank': row_data[rank_idx] if rank_idx is not None and rank_idx < len(row_data) else '',
+                        'additional': row_data[additional_idx] if additional_idx is not None and additional_idx < len(row_data) else ''
+                    })
+            if not found:
+                await interaction.followup.send(f'Ники, содержащие **{self.nick.value}**, не найдены.', ephemeral=True)
+                return
+            msg = f'**Нарушения для ников, содержащих "{self.nick.value}":**\n'
+            for rec in found[:5]:
+                msg += f'• Строка {rec["row_num"]}: {rec["nick"]}'
+                if rec["rank"]:
+                    msg += f' (Звание: {rec["rank"]})'
+                msg += f' — {rec["violation"]} — {rec["seconds"]} сек., дата: {rec["date"]}'
+                if rec["additional"]:
+                    msg += f' [Доп.: {rec["additional"]}]'
+                msg += '\n'
+            if len(found) > 5:
+                msg += f'… и ещё {len(found)-5} записей.'
+            await interaction.followup.send(msg, ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
+
+class EditModal(ui.Modal, title='✏️ Изменение строки'):
+    row_num = ui.TextInput(label='Номер строки (первая запись = 2)', placeholder='Введите номер', required=True)
+    nick = ui.TextInput(label='Новый ник (оставьте пустым, если не менять)', required=False)
+    violation = ui.TextInput(label='Новый вид нарушения', required=False)
+    seconds = ui.TextInput(label='Новая мера (сек.)', required=False)
+    additional = ui.TextInput(
+        label='Новые примечания / доп. информация',
+        placeholder='Введите новые примечания (если нужно)',
+        required=False,
+        style=discord.TextStyle.paragraph
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            row_idx = int(self.row_num.value)
+            if row_idx < 2:
+                await interaction.followup.send('❌ Номер строки должен быть ≥ 2.', ephemeral=True)
+                return
+        except ValueError:
+            await interaction.followup.send('❌ Номер строки должен быть числом.', ephemeral=True)
+            return
+        try:
+            all_values = sheet.get_all_values()
+            if row_idx > len(all_values):
+                await interaction.followup.send('❌ Строка не найдена.', ephemeral=True)
+                return
+            existing_row = all_values[row_idx - 1]
+            header_row = all_values[0]
+            def find_idx(pattern):
+                for i, h in enumerate(header_row):
+                    if pattern.lower() in h.lower().strip():
+                        return i
+                return None
+            col_indices = {
+                'ник': find_idx('ник'),
+                'вид нарушения': find_idx('вид нарушения'),
+                'мера наказания (сек.)': find_idx('мера наказания'),
+                'дата нарушения': find_idx('дата нарушения'),
+                'срок погашения': find_idx('срок погашения'),
+                'примечания': find_idx('примечания'),
+                'дополнительные решения': find_idx('дополнительные решения')
+            }
+            new_row = existing_row[:]
+            if len(new_row) < len(header_row):
+                new_row.extend([''] * (len(header_row) - len(new_row)))
+            if self.nick.value and col_indices['ник'] is not None:
+                new_row[col_indices['ник']] = self.nick.value
+            if self.violation.value and col_indices['вид нарушения'] is not None:
+                new_row[col_indices['вид нарушения']] = self.violation.value
+            if self.seconds.value and col_indices['мера наказания (сек.)'] is not None:
+                try:
+                    sec = int(self.seconds.value)
+                    new_row[col_indices['мера наказания (сек.)']] = str(sec)
+                    if col_indices['дата нарушения'] is not None:
+                        date_str = new_row[col_indices['дата нарушения']]
+                        if date_str:
+                            try:
+                                dt = datetime.strptime(date_str, '%Y-%m-%d')
+                                if col_indices['срок погашения'] is not None:
+                                    new_row[col_indices['срок погашения']] = (dt + timedelta(seconds=sec)).strftime('%Y-%m-%d')
+                            except ValueError:
+                                pass
+                except ValueError:
+                    await interaction.followup.send('❌ Мера наказания должна быть числом.', ephemeral=True)
+                    return
+            if self.additional.value:
+                if col_indices['примечания'] is not None:
+                    new_row[col_indices['примечания']] = self.additional.value
+                elif col_indices['дополнительные решения'] is not None:
+                    new_row[col_indices['дополнительные решения']] = self.additional.value
+            cell_range = f'A{row_idx}:{chr(65 + len(header_row) - 1)}{row_idx}'
+            sheet.update(cell_range, [new_row], value_input_option='USER_ENTERED')
+            format_row(sheet, row_idx)
+            await interaction.followup.send(f'✅ Строка {row_idx} обновлена!', ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
+
+# ===================== ВИДЫ ДЛЯ ПОШАГОВОГО ДИАЛОГА (ВП/Администрация, Звание) =====================
 class WhoIssuedView(ui.View):
     def __init__(self):
         super().__init__(timeout=300)
@@ -331,7 +483,6 @@ class RankSelectView(ui.View):
     def __init__(self, who_issued: str):
         super().__init__(timeout=300)
         self.who_issued = who_issued
-
         options = [discord.SelectOption(label=rank, value=rank) for rank in self.RANKS]
         select = ui.Select(placeholder='Выберите звание...', options=options, custom_id='rank_select')
         select.callback = self.rank_callback
@@ -340,6 +491,63 @@ class RankSelectView(ui.View):
     async def rank_callback(self, interaction: discord.Interaction):
         selected_rank = interaction.data['values'][0]
         await interaction.response.send_modal(AddModal(self.who_issued, selected_rank))
+
+# ===================== ПАГИНАЦИЯ ДЛЯ ИСТОРИИ =====================
+class HistoryView(ui.View):
+    def __init__(self, records, page=0, per_page=5):
+        super().__init__(timeout=120)
+        self.records = records  # список словарей с ключом 'row_num' и данными
+        self.page = page
+        self.per_page = per_page
+        self.max_page = max(0, (len(records) - 1) // per_page)
+
+    def get_embed(self):
+        start = self.page * self.per_page
+        end = start + self.per_page
+        page_records = self.records[start:end]
+        embed = discord.Embed(
+            title=f"📜 Последние записи (страница {self.page+1}/{self.max_page+1})",
+            color=discord.Color.blue()
+        )
+        if not page_records:
+            embed.description = "Нет записей."
+            return embed
+        for rec in page_records:
+            row_num = rec.get('row_num', '?')
+            nick = rec.get('ник', '')
+            violation = rec.get('вид нарушения', '')
+            date = rec.get('дата нарушения', '')
+            rank = rec.get('звание', '')
+            additional = rec.get('дополнительные решения', '') or rec.get('примечания', '')
+            line = f"**{nick}**"
+            if rank:
+                line += f" ({rank})"
+            line += f" — {violation} — {date}"
+            if additional:
+                line += f" [Доп.: {additional}]"
+            embed.add_field(name=f"Строка {row_num}", value=line, inline=False)
+        return embed
+
+    @ui.button(label='◀️', style=discord.ButtonStyle.secondary)
+    async def prev_button(self, interaction: discord.Interaction, button: ui.Button):
+        if self.page > 0:
+            self.page -= 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @ui.button(label='▶️', style=discord.ButtonStyle.secondary)
+    async def next_button(self, interaction: discord.Interaction, button: ui.Button):
+        if self.page < self.max_page:
+            self.page += 1
+            await interaction.response.edit_message(embed=self.get_embed(), view=self)
+        else:
+            await interaction.response.defer()
+
+    @ui.button(label='Закрыть', style=discord.ButtonStyle.red)
+    async def close_button(self, interaction: discord.Interaction, button: ui.Button):
+        await interaction.message.delete()
+        await interaction.response.defer()
 
 # ===================== ОСНОВНОЕ МЕНЮ =====================
 class MenuView(ui.View):
@@ -373,16 +581,65 @@ class MenuView(ui.View):
             return
         await interaction.response.defer(ephemeral=True)
         try:
-            records = get_current_records()
+            records = get_current_records_with_rows()
             if not records:
                 await interaction.followup.send('Таблица пуста.', ephemeral=True)
                 return
-            last = records[-1]
-            row_num = len(records) + 1
-            msg = f'**Последняя запись (строка {row_num}):**\n'
-            for key, val in last.items():
-                msg += f'**{key}:** {val}\n'
-            await interaction.followup.send(msg, ephemeral=True)
+            last = records[-1]  # последняя запись (по номеру строки)
+            row_num = last['row_num']
+            embed = discord.Embed(
+                title='📋 Последняя запись',
+                color=discord.Color.blue(),
+                description=f"**Строка {row_num}**"
+            )
+            field_map = {
+                'кем выдано': '👤 Кем выдано',
+                'ник': '🆔 Ник',
+                'звание': '🎖️ Звание',
+                'дата нарушения': '📅 Дата нарушения',
+                'вид нарушения': '📌 Вид нарушения',
+                'мера наказания (сек.)': '⏱️ Мера (сек.)',
+                'срок погашения': '🗓️ Срок погашения',
+                'рецидив': '🔄 Рецидив',
+                'предыдущие нарушения': '📜 Предыдущие нарушения',
+                'примечания': '📝 Примечания',
+                'дополнительные решения': '⚖️ Дополнительные решения'
+            }
+            fields_added = 0
+            for key, value in last.items():
+                if key == 'row_num':
+                    continue
+                human_key = key
+                for k, v in field_map.items():
+                    if k in key.lower():
+                        human_key = v
+                        break
+                if value and value.strip():
+                    embed.add_field(name=human_key, value=value, inline=False)
+                    fields_added += 1
+            if fields_added == 0:
+                embed.description = 'Запись не содержит данных.'
+            await interaction.followup.send(embed=embed, ephemeral=True)
+        except Exception as e:
+            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
+
+    @ui.button(label='📜 История', style=discord.ButtonStyle.blurple)
+    async def history_button(self, interaction: discord.Interaction, button: ui.Button):
+        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
+            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            records = get_current_records_with_rows()
+            if not records:
+                await interaction.followup.send('Таблица пуста.', ephemeral=True)
+                return
+            # Сортируем по убыванию номера строки (последние сверху)
+            records.sort(key=lambda x: x['row_num'], reverse=True)
+            # Ограничиваем последними 20 записями (для производительности)
+            records = records[:20]
+            view = HistoryView(records)
+            await interaction.followup.send(embed=view.get_embed(), view=view, ephemeral=True)
         except Exception as e:
             await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
@@ -392,166 +649,6 @@ class MenuView(ui.View):
             await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
             return
         await interaction.response.send_modal(EditModal())
-
-# ===================== МОДАЛЬНЫЕ ОКНА ДЛЯ ПОИСКА И ИЗМЕНЕНИЯ =====================
-class FindModal(ui.Modal, title='🔍 Поиск нарушений по нику'):
-    nick = ui.TextInput(label='Ник нарушителя', placeholder='Введите ник', required=True)
-    async def on_submit(self, interaction: discord.Interaction):
-        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
-            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
-            return
-
-        # Важно: откладываем ответ, чтобы избежать тайм-аута
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            records = get_current_records()
-            if not records:
-                await interaction.followup.send('Таблица пуста.', ephemeral=True)
-                return
-
-            header_row = sheet.get_all_values()[0]
-            def find_col(pattern):
-                for i, h in enumerate(header_row):
-                    if pattern.lower() in h.lower().strip():
-                        return i
-                return None
-
-            nick_idx = find_col('ник')
-            violation_idx = find_col('вид нарушения')
-            seconds_idx = find_col('мера наказания')
-            date_idx = find_col('дата нарушения')
-            rank_idx = find_col('звание')
-            additional_idx = find_col('дополнительные решения')
-            if additional_idx is None:
-                additional_idx = find_col('примечания')
-
-            if nick_idx is None:
-                await interaction.followup.send('❌ Столбец "Ник" не найден.', ephemeral=True)
-                return
-
-            search_term = self.nick.value.lower()
-            found = []
-            for idx, rec in enumerate(records, start=2):
-                row_data = sheet.row_values(idx)
-                nick_val = row_data[nick_idx] if nick_idx < len(row_data) else ''
-                if search_term in nick_val.lower():
-                    found.append({
-                        'row_num': idx,
-                        'nick': nick_val,
-                        'violation': row_data[violation_idx] if violation_idx is not None and violation_idx < len(row_data) else '',
-                        'seconds': row_data[seconds_idx] if seconds_idx is not None and seconds_idx < len(row_data) else '',
-                        'date': row_data[date_idx] if date_idx is not None and date_idx < len(row_data) else '',
-                        'rank': row_data[rank_idx] if rank_idx is not None and rank_idx < len(row_data) else '',
-                        'additional': row_data[additional_idx] if additional_idx is not None and additional_idx < len(row_data) else ''
-                    })
-
-            if not found:
-                await interaction.followup.send(f'Ники, содержащие **{self.nick.value}**, не найдены.', ephemeral=True)
-                return
-
-            msg = f'**Нарушения для ников, содержащих "{self.nick.value}":**\n'
-            for rec in found[:5]:
-                msg += f'• Строка {rec["row_num"]}: {rec["nick"]}'
-                if rec["rank"]:
-                    msg += f' (Звание: {rec["rank"]})'
-                msg += f' — {rec["violation"]} — {rec["seconds"]} сек., дата: {rec["date"]}'
-                if rec["additional"]:
-                    msg += f' [Доп.: {rec["additional"]}]'
-                msg += '\n'
-            if len(found) > 5:
-                msg += f'… и ещё {len(found)-5} записей.'
-            await interaction.followup.send(msg, ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
-
-class EditModal(ui.Modal, title='✏️ Изменение строки'):
-    row_num = ui.TextInput(label='Номер строки (первая запись = 2)', placeholder='Введите номер', required=True)
-    nick = ui.TextInput(label='Новый ник (оставьте пустым, если не менять)', required=False)
-    violation = ui.TextInput(label='Новый вид нарушения', required=False)
-    seconds = ui.TextInput(label='Новая мера (сек.)', required=False)
-    additional = ui.TextInput(
-        label='Новые примечания / доп. информация',
-        placeholder='Введите новые примечания (если нужно)',
-        required=False,
-        style=discord.TextStyle.paragraph
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        if not is_guild_only(interaction) or not is_allowed(interaction.user.id):
-            await interaction.response.send_message('❌ Доступ запрещён.', ephemeral=True)
-            return
-
-        await interaction.response.defer(ephemeral=True)
-
-        try:
-            row_idx = int(self.row_num.value)
-            if row_idx < 2:
-                await interaction.followup.send('❌ Номер строки должен быть ≥ 2.', ephemeral=True)
-                return
-        except ValueError:
-            await interaction.followup.send('❌ Номер строки должен быть числом.', ephemeral=True)
-            return
-
-        try:
-            all_values = sheet.get_all_values()
-            if row_idx > len(all_values):
-                await interaction.followup.send('❌ Строка не найдена.', ephemeral=True)
-                return
-            existing_row = all_values[row_idx - 1]
-            header_row = all_values[0]
-
-            def find_idx(pattern):
-                for i, h in enumerate(header_row):
-                    if pattern.lower() in h.lower().strip():
-                        return i
-                return None
-
-            col_indices = {}
-            col_indices['ник'] = find_idx('ник')
-            col_indices['вид нарушения'] = find_idx('вид нарушения')
-            col_indices['мера наказания (сек.)'] = find_idx('мера наказания')
-            col_indices['дата нарушения'] = find_idx('дата нарушения')
-            col_indices['срок погашения'] = find_idx('срок погашения')
-            col_indices['примечания'] = find_idx('примечания')
-            col_indices['дополнительные решения'] = find_idx('дополнительные решения')
-
-            new_row = existing_row[:]
-            if len(new_row) < len(header_row):
-                new_row.extend([''] * (len(header_row) - len(new_row)))
-
-            if self.nick.value and col_indices['ник'] is not None:
-                new_row[col_indices['ник']] = self.nick.value
-            if self.violation.value and col_indices['вид нарушения'] is not None:
-                new_row[col_indices['вид нарушения']] = self.violation.value
-            if self.seconds.value and col_indices['мера наказания (сек.)'] is not None:
-                try:
-                    sec = int(self.seconds.value)
-                    new_row[col_indices['мера наказания (сек.)']] = str(sec)
-                    if col_indices['дата нарушения'] is not None:
-                        date_str = new_row[col_indices['дата нарушения']]
-                        if date_str:
-                            try:
-                                dt = datetime.strptime(date_str, '%Y-%m-%d')
-                                if col_indices['срок погашения'] is not None:
-                                    new_row[col_indices['срок погашения']] = (dt + timedelta(seconds=sec)).strftime('%Y-%m-%d')
-                            except ValueError:
-                                pass
-                except ValueError:
-                    await interaction.followup.send('❌ Мера наказания должна быть числом.', ephemeral=True)
-                    return
-            if self.additional.value:
-                if col_indices['примечания'] is not None:
-                    new_row[col_indices['примечания']] = self.additional.value
-                elif col_indices['дополнительные решения'] is not None:
-                    new_row[col_indices['дополнительные решения']] = self.additional.value
-
-            cell_range = f'A{row_idx}:{chr(65 + len(header_row) - 1)}{row_idx}'
-            sheet.update(cell_range, [new_row], value_input_option='USER_ENTERED')
-            format_row(sheet, row_idx)
-            await interaction.followup.send(f'✅ Строка {row_idx} обновлена!', ephemeral=True)
-        except Exception as e:
-            await interaction.followup.send(f'❌ Ошибка: {e}', ephemeral=True)
 
 # ===================== КОМАНДА МЕНЮ =====================
 @bot.command(name='меню')
@@ -567,7 +664,7 @@ async def menu_command(ctx):
     )
     await ctx.send(embed=embed, view=MenuView())
 
-# ===================== АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ МЕНЮ (ИСПРАВЛЕННОЕ) =====================
+# ===================== АВТОМАТИЧЕСКОЕ ОБНОВЛЕНИЕ МЕНЮ =====================
 async def send_or_update_menu():
     channel = bot.get_channel(CHANNEL_ID_INT)
     if not channel:
@@ -582,7 +679,6 @@ async def send_or_update_menu():
     view = MenuView()
 
     try:
-        # Попытаемся найти существующее сообщение с меню
         found_msg = None
         async for msg in channel.history(limit=20):
             if msg.author.id == bot.user.id and msg.embeds:
@@ -594,11 +690,9 @@ async def send_or_update_menu():
                     break
 
         if found_msg:
-            # Обновляем существующее
             await found_msg.edit(embed=embed, view=view)
             print(f"✅ Меню обновлено (сообщение {found_msg.id})")
         else:
-            # Отправляем новое
             new_msg = await channel.send(embed=embed, view=view)
             print(f"✅ Меню отправлено (новое сообщение {new_msg.id})")
     except discord.Forbidden:
