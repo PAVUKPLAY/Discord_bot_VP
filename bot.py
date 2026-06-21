@@ -475,7 +475,7 @@ class RankSelectView(ui.View):
         selected_rank = interaction.data['values'][0]
         await interaction.response.send_modal(AddModal(self.who_issued, selected_rank))
 
-# ===================== ИСТОРИЯ С ПАГИНАЦИЕЙ (исправлена) =====================
+# ===================== ИСТОРИЯ (без кнопки закрытия) =====================
 class HistoryView(ui.View):
     def __init__(self, records, page=0, per_page=5):
         super().__init__(timeout=120)
@@ -483,7 +483,6 @@ class HistoryView(ui.View):
         self.page = page
         self.per_page = per_page
         self.max_page = max(0, (len(records) - 1) // per_page)
-        # Заранее получаем индексы нужных столбцов, чтобы не искать каждый раз
         self.header_row = sheet.get_all_values()[0]
         self.nick_idx = self._find_col('ник')
         self.who_idx = self._find_col('кем выдано')
@@ -547,17 +546,7 @@ class HistoryView(ui.View):
         else:
             await interaction.response.defer()
 
-    @ui.button(label='Закрыть', style=discord.ButtonStyle.red)
-    async def close_button(self, interaction: discord.Interaction, button: ui.Button):
-        await interaction.response.defer()
-        try:
-            await interaction.message.delete()
-        except discord.NotFound:
-            pass
-        except Exception as e:
-            await interaction.followup.send(f"Ошибка при удалении: {e}", ephemeral=True)
-
-# ===================== ОСНОВНОЕ МЕНЮ (без «Последнее») =====================
+# ===================== ОСНОВНОЕ МЕНЮ =====================
 class MenuView(ui.View):
     def __init__(self):
         super().__init__(timeout=None)
