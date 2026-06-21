@@ -298,7 +298,7 @@ def format_row(sheet_obj, row_index_1based):
     }
     sheet_obj.spreadsheet.batch_update(body)
 
-# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ =====================
+# ===================== МОДАЛЬНОЕ ОКНО ДЛЯ ДОБАВЛЕНИЯ (исправленное) =====================
 class AddModal(ui.Modal, title='➕ Добавление нарушения'):
     def __init__(self, who_issued: str, rank: str):
         super().__init__()
@@ -364,8 +364,8 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
                 expiration_col = col_indices['срок погашения']
                 date_cell = f"{chr(65 + date_col)}{insert_pos}"
                 formula_a1 = f"={date_cell}+21"
-                # Исправлено: используем update вместо update_acell
-                sheet.update(f"{chr(65 + expiration_col)}{insert_pos}", formula_a1, value_input_option='USER_ENTERED')
+                # Исправлено: передаём список списков для одной ячейки
+                sheet.update(f"{chr(65 + expiration_col)}{insert_pos}", [[formula_a1]], value_input_option='USER_ENTERED')
 
             format_row(sheet, insert_pos)
             await interaction.followup.send(f'✅ Нарушение для **{self.nick.value}** добавлено!', ephemeral=True)
