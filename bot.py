@@ -329,7 +329,6 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             await interaction.followup.send('❌ Мера наказания должна быть числом!', ephemeral=True)
             return
 
-        # Определяем индексы столбцов
         col_indices = {}
         for pattern in ['кем выдано', 'ник', 'звание', 'дата нарушения', 'вид нарушения', 'мера наказания (сек.)', 'срок погашения']:
             idx = find_column_index_by_name(pattern)
@@ -351,7 +350,6 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
             if key in col_indices:
                 row[col_indices[key]] = value
 
-        # Срок погашения пока оставляем пустым (заполним формулой после вставки)
         if 'срок погашения' in col_indices:
             row[col_indices['срок погашения']] = ''
 
@@ -361,13 +359,13 @@ class AddModal(ui.Modal, title='➕ Добавление нарушения'):
         try:
             sheet.insert_row(row, index=insert_pos, value_input_option='USER_ENTERED')
 
-            # Вставляем формулу = дата_нарушения + 21 день
             if 'дата нарушения' in col_indices and 'срок погашения' in col_indices:
                 date_col = col_indices['дата нарушения']
                 expiration_col = col_indices['срок погашения']
                 date_cell = f"{chr(65 + date_col)}{insert_pos}"
                 formula_a1 = f"={date_cell}+21"
-                sheet.update_acell(f"{chr(65 + expiration_col)}{insert_pos}", formula_a1, value_input_option='USER_ENTERED')
+                # Исправлено: используем update вместо update_acell
+                sheet.update(f"{chr(65 + expiration_col)}{insert_pos}", formula_a1, value_input_option='USER_ENTERED')
 
             format_row(sheet, insert_pos)
             await interaction.followup.send(f'✅ Нарушение для **{self.nick.value}** добавлено!', ephemeral=True)
@@ -500,18 +498,11 @@ class EditModal(ui.Modal, title='✏️ Изменение строки'):
                 try:
                     sec = int(self.seconds.value)
                     new_row[col_indices['мера наказания (сек.)']] = str(sec)
-                    # Пересчёт срока погашения (если есть дата нарушения)
+                    # Обновляем формулу срока погашения
                     if col_indices['дата нарушения'] is not None and col_indices['срок погашения'] is not None:
-                        date_str = new_row[col_indices['дата нарушения']]
-                        if date_str:
-                            try:
-                                dt = datetime.strptime(date_str, '%Y-%m-%d')
-                                # Обновим ячейку формулой
-                                date_cell = f"{chr(65 + col_indices['дата нарушения'])}{row_idx}"
-                                formula_a1 = f"={date_cell}+21"
-                                new_row[col_indices['срок погашения']] = formula_a1
-                            except ValueError:
-                                pass
+                        date_cell = f"{chr(65 + col_indices['дата нарушения'])}{row_idx}"
+                        formula_a1 = f"={date_cell}+21"
+                        new_row[col_indices['срок погашения']] = formula_a1
                 except ValueError:
                     await interaction.followup.send('❌ Мера наказания должна быть числом.', ephemeral=True)
                     return
@@ -695,7 +686,7 @@ class MenuView(ui.View):
             return
         await interaction.response.send_modal(EditModal())
 
-# ===================== КОМАНДА ДЛЯ ОТПРАВКИ МЕНЮ =====================
+# ===================== КОМАНДА МЕНЮ =====================
 @bot.command(name='меню')
 @commands.guild_only()
 async def menu_command(ctx):
