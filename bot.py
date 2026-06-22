@@ -151,7 +151,52 @@ try:
             apply_formatting_to_range(sheet, 0, rows, 0, cols)
             print(f"✅ Применено форматирование Arial 12 ко всем {rows} строкам")
 
-    # ===== УСЛОВНОЕ ФОРМАТИРОВАНИЕ ДЛЯ СРОКА ПОГАШЕНИЯ (исправлено: красный - активно, зелёный - истекло) =====
+    # ===== ФУНКЦИЯ ДЛЯ ЗАПОЛНЕНИЯ ПРОПУЩЕННЫХ СРОКОВ ПОГАШЕНИЯ =====
+    def fill_missing_expiration_dates():
+        """Находит строки, где есть дата нарушения, но срок погашения пуст, и проставляет формулу."""
+        # Определяем индексы столбцов
+        date_col = None
+        exp_col = None
+        for i, col_name in enumerate(header_row):
+            if 'дата нарушения' in col_name.lower():
+                date_col = i
+            if 'срок погашения' in col_name.lower():
+                exp_col = i
+        if date_col is None or exp_col is None:
+            print("⚠️ Не удалось найти столбцы 'Дата нарушения' или 'Срок погашения' для заполнения.")
+            return
+
+        # Проходим по строкам, начиная со второй
+        rows_to_update = []
+        for row_num, row in enumerate(all_values[1:], start=2):
+            date_val = row[date_col] if date_col < len(row) else ''
+            exp_val = row[exp_col] if exp_col < len(row) else ''
+            if date_val and not exp_val:
+                # Проверим, что дата валидна
+                try:
+                    datetime.strptime(date_val, '%Y-%m-%d')
+                    # Формируем формулу
+                    date_cell = f"{chr(65 + date_col)}{row_num}"
+                    formula = f"={date_cell}+21"
+                    rows_to_update.append((row_num, exp_col, formula))
+                except ValueError:
+                    pass
+
+        if rows_to_update:
+            print(f"📝 Найдено {len(rows_to_update)} строк с пропущенным сроком погашения. Заполняем...")
+            for row_num, exp_col, formula in rows_to_update:
+                cell = f"{chr(65 + exp_col)}{row_num}"
+                try:
+                    sheet.update(range_name=cell, values=[[formula]], value_input_option='USER_ENTERED')
+                except Exception as e:
+                    print(f"⚠️ Ошибка при обновлении ячейки {cell}: {e}")
+            print(f"✅ Заполнено {len(rows_to_update)} ячеек.")
+        else:
+            print("ℹ️ Пропущенных сроков погашения не найдено.")
+
+    fill_missing_expiration_dates()
+
+    # ===== УСЛОВНОЕ ФОРМАТИРОВАНИЕ ДЛЯ СРОКА ПОГАШЕНИЯ (красный активно, зелёный истекло, белый текст) =====
     def setup_conditional_formatting():
         expiration_col = None
         for i, col_name in enumerate(header_row):
@@ -181,7 +226,10 @@ try:
                                     "values": [{"userEnteredValue": "=TODAY()"}]
                                 },
                                 "format": {
-                                    "backgroundColor": {"red": 0.8, "green": 0.2, "blue": 0.2}  # красный для активных
+                                    "backgroundColor": {"red": 0.8, "green": 0.2, "blue": 0.2},
+                                    "textFormat": {
+                                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}  # белый текст
+                                    }
                                 }
                             }
                         },
@@ -205,7 +253,10 @@ try:
                                     "values": [{"userEnteredValue": "=TODAY()"}]
                                 },
                                 "format": {
-                                    "backgroundColor": {"red": 0.2, "green": 0.8, "blue": 0.2}  # зелёный для истекших
+                                    "backgroundColor": {"red": 0.2, "green": 0.8, "blue": 0.2},
+                                    "textFormat": {
+                                        "foregroundColor": {"red": 1.0, "green": 1.0, "blue": 1.0}  # белый текст
+                                    }
                                 }
                             }
                         },
@@ -216,7 +267,7 @@ try:
         }
         try:
             sheet.spreadsheet.batch_update(body)
-            print("✅ Условное форматирование для столбца 'Срок погашения' настроено (красный - активно, зелёный - истекло).")
+            print("✅ Условное форматирование для столбца 'Срок погашения' настроено (красный - активно, зелёный - истекло, текст белый).")
         except Exception as e:
             print(f"⚠️ Ошибка при настройке условного форматирования: {e}")
 
