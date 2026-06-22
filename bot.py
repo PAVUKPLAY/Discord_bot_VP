@@ -151,7 +151,7 @@ try:
             apply_formatting_to_range(sheet, 0, rows, 0, cols)
             print(f"✅ Применено форматирование Arial 12 ко всем {rows} строкам")
 
-    # ===== УСЛОВНОЕ ФОРМАТИРОВАНИЕ ДЛЯ СРОКА ПОГАШЕНИЯ =====
+    # ===== УСЛОВНОЕ ФОРМАТИРОВАНИЕ ДЛЯ СРОКА ПОГАШЕНИЯ (исправлено: красный - активно, зелёный - истекло) =====
     def setup_conditional_formatting():
         expiration_col = None
         for i, col_name in enumerate(header_row):
@@ -181,7 +181,7 @@ try:
                                     "values": [{"userEnteredValue": "=TODAY()"}]
                                 },
                                 "format": {
-                                    "backgroundColor": {"red": 0.2, "green": 0.8, "blue": 0.2}
+                                    "backgroundColor": {"red": 0.8, "green": 0.2, "blue": 0.2}  # красный для активных
                                 }
                             }
                         },
@@ -205,7 +205,7 @@ try:
                                     "values": [{"userEnteredValue": "=TODAY()"}]
                                 },
                                 "format": {
-                                    "backgroundColor": {"red": 0.8, "green": 0.2, "blue": 0.2}
+                                    "backgroundColor": {"red": 0.2, "green": 0.8, "blue": 0.2}  # зелёный для истекших
                                 }
                             }
                         },
@@ -216,7 +216,7 @@ try:
         }
         try:
             sheet.spreadsheet.batch_update(body)
-            print("✅ Условное форматирование для столбца 'Срок погашения' настроено.")
+            print("✅ Условное форматирование для столбца 'Срок погашения' настроено (красный - активно, зелёный - истекло).")
         except Exception as e:
             print(f"⚠️ Ошибка при настройке условного форматирования: {e}")
 
@@ -318,7 +318,6 @@ def get_active_punishments(nick):
 
     print(f"[DEBUG] Найден ключ для ника: {nick_key}, для срока погашения: {exp_key}")
 
-    # Выводим все ники для диагностики
     all_nicks = [rec.get(nick_key, '') for rec in records if nick_key in rec]
     print(f"[DEBUG] Все ники в таблице: {all_nicks}")
 
